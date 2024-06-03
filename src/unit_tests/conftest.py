@@ -10,5 +10,5 @@ def spark_session_factory(app_name: str) -> SparkSession:
   )
 
 @pytest.fixture(scope='session')
-def spark_session():
-    return spark_session_factory("")
+def spark():
+    return spark_session_factory

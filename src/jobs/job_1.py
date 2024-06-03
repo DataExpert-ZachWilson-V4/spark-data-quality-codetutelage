@@ -4,21 +4,7 @@ from pyspark.sql.dataframe import DataFrame
 
 def query_1(output_table_name: str) -> str:
     query = f"""
-    WITH nba_values as (
-      SELECT 
-        *,
-        ROW_NUMBER() OVER(PARTITION BY game_id, team_id, player_id) as rnum
-      FROM {output_table_name}
-    )
-
-    SELECT 
-      game_id,
-      team_id,
-      team_city,
-      player_id,
-      player_name
-    FROM nba_values 
-    WHERE rnum=1
+    <YOUR QUERY HERE>
     """
     return query
 
@@ -28,7 +14,7 @@ def job_1(spark_session: SparkSession, output_table_name: str) -> Optional[DataF
   return spark_session.sql(query_1(output_table_name))
 
 def main():
-    output_table_name: str = "bootcamp.nba_game_details"
+    output_table_name: str = "<output table name here>"
     spark_session: SparkSession = (
         SparkSession.builder
         .master("local")
