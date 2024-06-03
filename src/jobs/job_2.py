@@ -2,78 +2,89 @@ from typing import Optional
 from pyspark.sql import SparkSession
 from pyspark.sql.dataframe import DataFrame
 
-current_year = 2003
+CURRENT_YEAR = 1939
 
 
-def query_2(output_table_name: str, current_year: int) -> str:
+def query_2(
+    source_table_name: str, cumulative_table_name: str, CURRENT_YEAR: int
+) -> str:
     query = f"""
-        WITH
-
-            last_year AS (
-                SELECT
-                    *
-                FROM
-                    {output_table_name}
-                WHERE
-                    current_year = {current_year}
-            ),
-
-            this_year AS (
-                SELECT
-                    actor,
-                    actor_id,
-                    -- Aggregating all film details into an array for each actor
-                    array_agg (STRUCT(year, film, votes, rating, film_id)) AS films,
-                    -- Determining the 'quality_class' based on the average film rating
-                    CASE
-                        WHEN AVG(rating) > 8 THEN 'star'
-                        WHEN AVG(rating) > 7 THEN 'good'
-                        WHEN AVG(rating) > 6 THEN 'average'
-                        ELSE 'bad'
-                    END AS quality_class,
-                    year
-                FROM
-                    actor_films
-                WHERE
-                    year = {current_year+1}
-                    -- Grouping the results by actor, actor_id, and year for aggregation
-                GROUP BY
-                    actor,
-                    actor_id,
-                    year
+        with actors_last_yr as (
+        select
+            *
+        from
+           {cumulative_table_name}
+       where
+            CURRENT_YEAR = {CURRENT_YEAR}
+        ),
+        actors_this_yr as (
+        select
+            actor,
+            actor_id,
+            COLLECT_LIST(
+            struct(
+                film,
+                film_id,
+                votes,
+                rating,
+                year
             )
-
-        SELECT
-            COALESCE(ly.actor, ty.actor) AS actor,
-            COALESCE(ly.actor_id, ty.actor_id) AS actor_id,
-            CASE
-                WHEN ly.films IS NULL THEN ty.films
-                WHEN ty.films IS NOT NULL THEN ly.films || ty.films
-                ELSE ly.films
-            END AS films,
-            COALESCE(ty.quality_class, ly.quality_class) AS quality_class,
-            COALESCE(ty.actor_id, ly.actor_id) IS NOT NULL AS is_active,
-            COALESCE(ty.year, ly.current_year + 1) AS current_year
+            ) AS films,
+            AVG(rating) AS avg_rating,
+            year
         FROM
-            last_year ly
-            FULL OUTER JOIN this_year ty ON ty.actor_id = ly.actor_id
-            AND ly.current_year = ty.year - 1
+            {source_table_name}
+        WHERE
+            rating is not null
+            and year = {CURRENT_YEAR}+1
+        GROUP BY
+            actor,
+            actor_id,
+            year
+        )
+        select
+        coalesce(aly.actor, aty.actor) as actor,
+        coalesce(aly.actor_id, aty.actor_id) as actor_id,
+        case
+            when aty.films is null then aly.films
+            when aty.films is not null
+            and aly.films is null then aty.films
+            when aty.films is not null
+            and aly.films is not null then aty.films || aly.films
+        end as films,
+        CASE
+            WHEN avg_rating > 8 THEN 'star'
+            WHEN avg_rating > 7 THEN 'good'
+            WHEN avg_rating > 6 THEN 'average'
+            ELSE 'bad'
+        END AS quality_class,
+        aty.year is not null as is_active,
+        coalesce(aty.year, aly.CURRENT_YEAR + 1) as CURRENT_YEAR
+        from
+        actors_last_yr aly FULL
+        OUTER JOIN actors_this_yr aty ON aly.actor_id = aty.actor_id
     """
     return query
 
 
 def job_2(
-    spark: SparkSession, output_table_name: str, current_year: int
+    spark: SparkSession,
+    source_table_name,
+    cumulative_table_name: str,
+    CURRENT_YEAR: int,
 ) -> Optional[DataFrame]:
-    output_df = spark.table(output_table_name)
-    output_df.createOrReplaceTempView(output_table_name)
-    return spark.sql(query_2(output_table_name, current_year))
+    ingest_df = spark.table(source_table_name)
+    output_df = spark.table(cumulative_table_name)
+    ingest_df.createGlobalTempView(source_table_name)
+    output_df.createOrReplaceTempView(cumulative_table_name)
+    return spark.sql(query_2(source_table_name, cumulative_table_name, CURRENT_YEAR))
 
 
 def main():
-    output_table_name: str = "actors"
+    source_table_name = "actor_films"
+    cumulative_table_name: str = "actors"
     spark: SparkSession = (
         SparkSession.builder.master("local").appName("job_2").getOrCreate()
     )
-    output_df = job_2(spark, output_table_name, current_year)
-    output_df.write.mode("overwrite").insertInto(output_table_name)
+    output_df = job_2(spark, source_table_name, cumulative_table_name, CURRENT_YEAR)
+    output_df.write.mode("overwrite").insertInto(cumulative_table_name)
